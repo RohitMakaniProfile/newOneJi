@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router as api_router
+from app.api.devops_routes import router as devops_router
 from app.core.event_bus import EventBus
 from app.core.tools import ToolRegistry
 from app.storage.store import Store
@@ -57,16 +58,14 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS (helpful if you have UI running on a different port)
-    cors_origins = _get_cors_origins()
-    if cors_origins:
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=cors_origins,
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
+    # CORS – allow all origins so the frontend (different port) can connect
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # API routers
     # IMPORTANT:
@@ -74,6 +73,7 @@ def create_app() -> FastAPI:
     # Your log indicates frontend calls /api/... and /healthz, so no prefix here.
     app.include_router(api_router)
     app.include_router(llm_test_router)
+    app.include_router(devops_router)
 
     # Root endpoint so GET / doesn't 404 (your log shows GET / -> 404)
     @app.get("/")
