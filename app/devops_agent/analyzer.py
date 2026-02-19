@@ -75,6 +75,20 @@ def parse_test_output(output: str) -> List[BugInfo]:
                 error_text = loc_match.group(3).strip()
                 break
 
+        # Also try to extract line number from Python traceback format: File "...", line N
+        if line_number is None:
+            file_line_pattern = re.compile(
+                r'File\s+"([^"]+)",\s+line\s+(\d+)', re.IGNORECASE
+            )
+            for ctx_line in lines[context_start:context_end]:
+                fl_match = file_line_pattern.search(ctx_line)
+                if fl_match:
+                    try:
+                        line_number = int(fl_match.group(2))
+                    except ValueError:
+                        pass
+                    break
+
         # Fall back: grab first "E ..." line in context
         if not error_text:
             e_matches = error_line_pattern.findall(context_block)
