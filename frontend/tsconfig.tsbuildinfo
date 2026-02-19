@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/CIStatusTimeline.tsx","./src/components/FixesAppliedTable.tsx","./src/components/InputSection.tsx","./src/components/RunSummaryCard.tsx","./src/components/ScoreBreakdownPanel.tsx","./src/pages/Dashboard.tsx","./src/services/api.ts","./src/types/index.ts"],"version":"5.9.3"}
