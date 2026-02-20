@@ -3,7 +3,7 @@ import InputSection from '../components/InputSection';
 import RunSummaryCard from '../components/RunSummaryCard';
 import ScoreBreakdownPanel from '../components/ScoreBreakdownPanel';
 import FixesAppliedTable from '../components/FixesAppliedTable';
-import CIStatusTimeline from '../components/CIStatusTimeline';
+import { CIStatusTimeline } from '../components/CIStatusTimeline';
 import { startAnalysis, getJobStatus, createSSEStream } from '../services/api';
 import type { AnalyzeRequest, JobStatus } from '../types';
 
@@ -148,9 +148,15 @@ export default function Dashboard() {
         {/* CI Timeline */}
         {jobStatus && (
           <CIStatusTimeline
-            ciRuns={jobStatus.ci_runs}
+            runs={jobStatus.ci_runs.map((r, i) => ({
+              id: String(i),
+              iteration: r.iteration,
+              status: (r.status === 'failure' ? 'failed' : r.status) as 'success' | 'failed' | 'running' | 'pending',
+              timestamp: new Date(r.timestamp).getTime(),
+              logs: r.logs ?? undefined,
+            }))}
             currentIteration={jobStatus.progress.current_iteration}
-            totalIterations={jobStatus.progress.total_iterations}
+            maxIterations={jobStatus.progress.total_iterations}
           />
         )}
       </main>
