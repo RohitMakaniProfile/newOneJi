@@ -4,15 +4,16 @@ import asyncio
 import datetime
 import os
 import subprocess
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
+from urllib.parse import urlparse
 
 from app.devops_agent.analyzer import BugInfo, parse_test_output
 from app.devops_agent.ci_monitor import CIMonitor
 from app.devops_agent.fixer import FixGenerator
 from app.devops_agent.git_manager import GitManager
 from app.devops_agent.scorer import calculate_score
+from app.devops_agent.test_runner import LocalTestRunner
 from app.models.devops_models import (
-    BugType,
     CIRun,
     FixRecord,
     JobProgress,
@@ -41,10 +42,19 @@ class DevOpsAgent:
             api_key=azure_key,
             deployment=azure_deployment,
         )
+        self.local_runner = LocalTestRunner()
 
     @property
     def branch_name(self) -> str:
-        return f"{self.team_name}_{self.team_leader}_AI_Fix".replace(" ", "_")
+        return GitManager._sanitize_branch_name(self.team_name, self.team_leader)
+
+    def _branch_url(self) -> Optional[str]:
+        """Return the GitHub URL for the branch."""
+        parsed = urlparse(self.repo_url)
+        if parsed.hostname and (parsed.hostname == "github.com" or parsed.hostname.endswith(".github.com")):
+            repo_path = parsed.path.rstrip("/").removesuffix(".git")
+            return f"https://github.com{repo_path}/tree/{self.branch_name}"
+        return None
 
     async def run(self, job_id: str, job_store: dict) -> None:
         repo_path = f"/tmp/{job_id}"
@@ -55,17 +65,40 @@ class DevOpsAgent:
         job_store[job_id] = JobStatus(status="running").model_dump()
 
         try:
-            # Clone and branch
+            # Step 1: Clone repository
             await asyncio.to_thread(self.git.clone, repo_path)
-            await asyncio.to_thread(self.git.create_branch, repo_path, self.branch_name)
+
+            # Step 2: Create branch IMMEDIATELY and push to remote
+            branch = await asyncio.to_thread(
+                self.git.create_and_checkout_branch,
+                repo_path,
+                self.team_name,
+                self.team_leader,
+            )
+            job_store[job_id]["branch_name"] = branch
+            job_store[job_id]["branch_url"] = self._branch_url()
+
+            # Push the branch to remote so it exists on GitHub
+            try:
+                await asyncio.to_thread(self.git.push_branch, repo_path, branch)
+            except subprocess.CalledProcessError:
+                pass  # Non-fatal: push may fail if no auth; branch is still local
 
             fixes: List[FixRecord] = []
             ci_runs: List[CIRun] = []
 
+            # Determine whether the repo has CI/CD workflows
+            has_ci = self.ci.has_workflows(repo_path)
+
             for iteration in range(1, MAX_ITERATIONS + 1):
                 _update_progress(job_store, job_id, iteration, MAX_ITERATIONS)
 
-                success, output = await asyncio.to_thread(self.run_tests, repo_path)
+                # Step 3: Run tests locally (preferred) or via CI/CD
+                if has_ci:
+                    success, output = await asyncio.to_thread(self.run_tests, repo_path)
+                else:
+                    result = await asyncio.to_thread(self.local_runner.run, repo_path)
+                    success, output = result.success, result.output
 
                 # Count passing/failing
                 passing, failing = _count_tests(output)
@@ -95,22 +128,29 @@ class DevOpsAgent:
                     sha = await asyncio.to_thread(
                         self.git.commit_and_push,
                         repo_path,
-                        f"AI fix: iteration {iteration}",
+                        f"[AI-AGENT] Fix iteration {iteration}",
                     )
                     commit_count += 1
                 except subprocess.CalledProcessError:
                     # Nothing to commit
                     pass
 
-                # Check CI
-                ci_result = await self.ci.wait_for_completion(self.branch_name, timeout_seconds=120)
-                ci_status = ci_result.get("conclusion") or ci_result.get("status") or "unknown"
-                ci_runs.append(CIRun(
-                    iteration=iteration,
-                    status=ci_status,
-                    timestamp=timestamp,
-                    logs=ci_result.get("html_url"),
-                ))
+                # Check CI if available
+                if has_ci:
+                    ci_result = await self.ci.wait_for_completion(self.branch_name, timeout_seconds=120)
+                    ci_status = ci_result.get("conclusion") or ci_result.get("status") or "unknown"
+                    ci_runs.append(CIRun(
+                        iteration=iteration,
+                        status=ci_status,
+                        timestamp=timestamp,
+                        logs=ci_result.get("html_url"),
+                    ))
+                else:
+                    ci_runs.append(CIRun(
+                        iteration=iteration,
+                        status="local",
+                        timestamp=timestamp,
+                    ))
                 job_store[job_id]["ci_runs"] = [r.model_dump() for r in ci_runs]
 
             # Final score
