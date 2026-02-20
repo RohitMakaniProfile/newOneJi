@@ -1,75 +1,78 @@
+import { motion, AnimatePresence } from 'framer-motion';
+import { CheckCircle, XCircle, Loader, ExternalLink } from 'lucide-react';
 import { useState } from 'react';
-import type { CIRun } from '../types';
+import { formatDistanceToNow } from 'date-fns';
 
-interface Props {
-  ciRuns: CIRun[];
-  currentIteration: number;
-  totalIterations: number;
+interface CIRun {
+  id: string;
+  iteration: number;
+  status: 'success' | 'failed' | 'running' | 'pending';
+  timestamp: number;
+  duration?: number;
+  url?: string;
+  logs?: string;
 }
 
-export default function CIStatusTimeline({ ciRuns, currentIteration, totalIterations }: Props) {
-  const [expanded, setExpanded] = useState<number | null>(null);
+interface CIStatusTimelineProps {
+  runs?: CIRun[];
+  currentIteration?: number;
+  maxIterations?: number;
+}
+
+export const CIStatusTimeline = ({ runs = [], currentIteration = 1, maxIterations = 5 }: CIStatusTimelineProps) => {
+  const [expandedRun, setExpandedRun] = useState<string | null>(null);
 
   return (
-    <div className="bg-gray-900 rounded-2xl p-6 border border-gray-800 shadow-xl">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold text-white flex items-center gap-2">
-          <span>🔄</span> CI/CD Timeline
-        </h2>
-        <span className="text-sm text-gray-400">
-          Iteration {currentIteration}/{totalIterations}
-        </span>
-      </div>
-      {/* Progress bar */}
-      <div className="mb-6">
-        <div className="w-full bg-gray-800 rounded-full h-2">
-          <div
-            className="bg-blue-500 h-2 rounded-full transition-all duration-500"
-            style={{ width: `${Math.min(100, (currentIteration / totalIterations) * 100)}%` }}
-            role="progressbar"
-            aria-valuenow={currentIteration}
-            aria-valuemin={0}
-            aria-valuemax={totalIterations}
-          />
+    <motion.div className="mt-8 rounded-3xl bg-white shadow-2xl p-8" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h3 className="text-2xl font-bold text-gray-900">CI/CD Pipeline Timeline</h3>
+          <p className="text-gray-600 mt-1">Iteration {currentIteration} of {maxIterations}</p>
+        </div>
+        <div className="px-4 py-2 bg-blue-50 rounded-full">
+          <span className="text-sm font-semibold text-blue-700">{Math.round((currentIteration / maxIterations) * 100)}% Complete</span>
         </div>
       </div>
-      {ciRuns.length === 0 ? (
-        <p className="text-gray-500 text-center py-8">No CI/CD runs yet</p>
-      ) : (
-        <div className="relative">
-          {/* Horizontal line */}
-          <div className="absolute top-5 left-0 right-0 h-0.5 bg-gray-700" aria-hidden="true" />
-          <div className="flex gap-4 overflow-x-auto pb-2">
-            {ciRuns.map((run, idx) => (
-              <div key={idx} className="flex-shrink-0 flex flex-col items-center w-28">
-                <button
-                  onClick={() => setExpanded(expanded === idx ? null : idx)}
-                  className={`z-10 w-10 h-10 rounded-full flex items-center justify-center text-lg border-2 transition-all ${
-                    run.status === 'success' ? 'bg-green-900 border-green-500 hover:bg-green-800' :
-                    run.status === 'failure' ? 'bg-red-900 border-red-500 hover:bg-red-800' :
-                    'bg-yellow-900 border-yellow-500 hover:bg-yellow-800'
-                  }`}
-                  aria-label={`CI Run ${run.iteration}: ${run.status}`}
-                  aria-expanded={expanded === idx}
-                >
-                  {run.status === 'success' ? '✅' : run.status === 'failure' ? '❌' : '⏳'}
-                </button>
-                <p className="text-xs text-gray-400 mt-2">Iter {run.iteration}</p>
-                <p className="text-xs text-gray-500">{new Date(run.timestamp).toLocaleTimeString()}</p>
-              </div>
-            ))}
-          </div>
-          {/* Expanded log */}
-          {expanded !== null && ciRuns[expanded]?.logs && (
-            <div className="mt-4 bg-gray-800 rounded-lg p-4 max-h-48 overflow-y-auto">
-              <h3 className="text-sm font-semibold text-gray-300 mb-2">
-                Iteration {ciRuns[expanded].iteration} Logs
-              </h3>
-              <pre className="text-xs text-gray-400 whitespace-pre-wrap">{ciRuns[expanded].logs}</pre>
-            </div>
-          )}
+      <div className="relative py-12">
+        <div className="absolute top-1/2 left-0 right-0 h-1 bg-gray-200 transform -translate-y-1/2" />
+        <motion.div className="absolute top-1/2 left-0 h-1 bg-gradient-to-r from-blue-500 to-green-500 transform -translate-y-1/2" initial={{ width: '0%' }} animate={{ width: `${(currentIteration / maxIterations) * 100}%` }} />
+        <div className="relative flex justify-between">
+          {Array.from({ length: maxIterations }).map((_, i) => {
+            const run = runs.find(r => r.iteration === i + 1);
+            return <TimelineNode key={i} iteration={i + 1} status={run?.status || 'pending'} run={run} onToggle={() => run && setExpandedRun(expandedRun === run.id ? null : run.id)} />;
+          })}
         </div>
-      )}
-    </div>
+      </div>
+      <AnimatePresence>{expandedRun && <ExpandedRunDetails run={runs.find(r => r.id === expandedRun)!} onClose={() => setExpandedRun(null)} />}</AnimatePresence>
+    </motion.div>
   );
-}
+};
+
+const TimelineNode = ({ iteration, status, run, onToggle }: any) => (
+  <div className="flex flex-col items-center">
+    <motion.button className={`w-14 h-14 rounded-full flex items-center justify-center shadow-lg ${status === 'success' ? 'bg-green-500' : status === 'failed' ? 'bg-red-500' : status === 'running' ? 'bg-blue-500 animate-pulse' : 'bg-gray-300'}`} initial={{ scale: 0 }} animate={{ scale: 1 }} whileHover={run ? { scale: 1.1 } : {}} onClick={run ? onToggle : undefined}>
+      {status === 'success' ? <CheckCircle className="w-6 h-6 text-white" /> : status === 'failed' ? <XCircle className="w-6 h-6 text-white" /> : status === 'running' ? <Loader className="w-6 h-6 text-white animate-spin" /> : <span className="text-white font-bold">{iteration}</span>}
+    </motion.button>
+    <p className="mt-4 text-sm font-semibold">Run {iteration}</p>
+    {run && <p className="text-xs text-gray-500">{formatDistanceToNow(run.timestamp, { addSuffix: true })}</p>}
+  </div>
+);
+
+const StatusBadge = ({ status }: { status: string }) => {
+  const styles: any = { success: 'bg-green-100 text-green-700', failed: 'bg-red-100 text-red-700', running: 'bg-blue-100 text-blue-700' };
+  return <span className={`px-2 py-1 rounded-full text-xs font-semibold ${styles[status]}`}>{status === 'success' ? 'Passed' : status === 'failed' ? 'Failed' : 'Running'}</span>;
+};
+
+const ExpandedRunDetails = ({ run, onClose }: any) => (
+  <motion.div className="mt-6 rounded-2xl bg-gray-50 p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+    <div className="flex justify-between mb-4">
+      <h4 className="text-lg font-bold">Run {run.iteration} Details</h4>
+      <button onClick={onClose}>✕</button>
+    </div>
+    <div className="space-y-3">
+      <div className="flex gap-2"><span className="text-sm font-medium">Status:</span><StatusBadge status={run.status} /></div>
+      {run.url && <a href={run.url} target="_blank" className="text-blue-600 text-sm flex items-center gap-2">View on GitHub <ExternalLink className="w-4 h-4" /></a>}
+      {run.logs && <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg text-xs overflow-auto max-h-64">{run.logs}</pre>}
+    </div>
+  </motion.div>
+);
