@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from typing import Optional, Tuple
 from urllib.parse import urlparse
@@ -33,6 +34,32 @@ class CIMonitor:
             headers["Authorization"] = f"Bearer {self.token}"
         return headers
 
+    def has_workflows(self, repo_path: str) -> bool:
+        """Check whether the cloned repository contains GitHub Actions workflow files."""
+        workflows_dir = os.path.join(repo_path, ".github", "workflows")
+        if not os.path.isdir(workflows_dir):
+            return False
+        return any(
+            f.endswith((".yml", ".yaml"))
+            for f in os.listdir(workflows_dir)
+        )
+
+    async def check_workflows_exist_remote(self) -> bool:
+        """Check whether the repository has any GitHub Actions workflows via API."""
+        if not _AIOHTTP_AVAILABLE:
+            return False
+        owner, repo = self.extract_owner_repo()
+        url = f"{self.GITHUB_API}/repos/{owner}/{repo}/actions/workflows"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=self._headers()) as resp:
+                    if resp.status != 200:
+                        return False
+                    data = await resp.json()
+                    return data.get("total_count", 0) > 0
+        except Exception:  # noqa: BLE001
+            return False
+
     async def get_latest_run(self, branch: str, session=None) -> Optional[dict]:
         """Query GitHub Actions API for the latest workflow run on a branch."""
         if not _AIOHTTP_AVAILABLE:
@@ -63,6 +90,29 @@ class CIMonitor:
 
         async with aiohttp.ClientSession() as s:
             return await _fetch(s)
+
+    async def get_run_logs(self, run_id: int) -> str:
+        """Fetch workflow run jobs and return concatenated log summaries."""
+        if not _AIOHTTP_AVAILABLE:
+            return ""
+        owner, repo = self.extract_owner_repo()
+        url = f"{self.GITHUB_API}/repos/{owner}/{repo}/actions/runs/{run_id}/jobs"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=self._headers()) as resp:
+                    if resp.status != 200:
+                        return ""
+                    data = await resp.json()
+                    lines = []
+                    for job in data.get("jobs", []):
+                        if job.get("conclusion") in ("failure", "timed_out"):
+                            lines.append(f"Job '{job.get('name')}' failed.")
+                            for step in job.get("steps", []):
+                                if step.get("conclusion") == "failure":
+                                    lines.append(f"  Step failed: {step.get('name')}")
+                    return "\n".join(lines)
+        except Exception:  # noqa: BLE001
+            return ""
 
     async def wait_for_completion(self, branch: str, timeout_seconds: int = 300) -> dict:
         """Poll GitHub Actions until the run completes or timeout is reached."""

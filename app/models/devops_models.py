@@ -65,6 +65,8 @@ class JobProgress(BaseModel):
 
 class JobStatus(BaseModel):
     status: str = "running"
+    branch_name: Optional[str] = None
+    branch_url: Optional[str] = None
     progress: JobProgress = JobProgress()
     fixes: List[FixRecord] = []
     ci_runs: List[CIRun] = []
